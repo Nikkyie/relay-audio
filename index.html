@@ -184,21 +184,27 @@
    1) PASTE YOUR FIREBASE CONFIG HERE
    Firebase console → Project settings → General → Your apps → SDK setup
    ====================================================================== */
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyDOIcKvPryv25xo7bH49futlVN2KjFjp6A",
+  authDomain: "relay-audio.firebaseapp.com",
+  databaseURL: "https://relay-audio-default-rtdb.firebaseio.com",
+  projectId: "relay-audio",
+  storageBucket: "relay-audio.firebasestorage.app",
+  messagingSenderId: "532321550013",
+  appId: "1:532321550013:web:b7efcc519e0a26e79541d4"
 };
 /* ====================================================================== */
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
-const activeDeviceRef = db.ref('relay/activeDevice');
-const nowPlayingRef = db.ref('relay/nowPlaying');
+const activeDeviceRef = db.ref('relay-audio/activeDevice');
+const nowPlayingRef = db.ref('relay-audio/nowPlaying');
 
 // ---- device identity ----
 function genId(prefix) {
