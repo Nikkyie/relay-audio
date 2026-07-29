@@ -205,6 +205,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 const activeDeviceRef = db.ref('relay-audio/activeDevice');
 const nowPlayingRef = db.ref('relay-audio/nowPlaying');
+const playbackStateRef = db.ref('relay-audio/playbackState');
 
 // ---- device identity ----
 function genId(prefix) {
@@ -223,7 +224,7 @@ document.getElementById('deviceChip').addEventListener('click', () => {
     localStorage.setItem('relay-device-name', deviceName);
     document.getElementById('deviceNameDisplay').textContent = deviceName;
     if (isSpeaker()) {
-      activeDeviceRef.set({ deviceId, deviceName, claimedAt: Date.now() });
+      writeDatabase(activeDeviceRef, { deviceId, deviceName, claimedAt: Date.now() }, 'Unable to update your speaker name.');
     }
   }
 });
@@ -231,13 +232,83 @@ document.getElementById('deviceChip').addEventListener('click', () => {
 // ---- state ----
 let activeDevice = null;
 let nowPlaying = null;
+let playbackState = null;
 let isPlayingGuess = false;
 let lastAppliedCommandId = null;
 let player = null; // hidden iframe element
+let progressSyncTimer = null;
+let lastReportedPlaybackSeconds = null;
+
+function showDatabaseError(message) {
+  const status = document.getElementById('statusError');
+  if (status) {
+    status.textContent = message;
+    status.style.display = 'block';
+  }
+}
+
+function writeDatabase(ref, value, fallbackMessage) {
+  ref.set(value).catch(err => {
+    console.error('Database write failed:', err);
+    const code = err && err.code ? err.code : '';
+    const detail = code === 'PERMISSION_DENIED'
+      ? 'Your Firebase database rules are blocking writes. Update them to allow this project to read and write.'
+      : 'Check your Firebase connection and configuration.';
+    showDatabaseError(`${fallbackMessage} ${detail}`);
+  });
+}
 
 function isSpeaker() {
   return activeDevice && activeDevice.deviceId === deviceId;
 }
+
+function setPlaybackState(seconds, videoId) {
+  const nextSeconds = Math.max(0, Math.round(seconds || 0));
+  const payload = { videoId: videoId || (nowPlaying && nowPlaying.videoId) || null, lastKnownSeconds: nextSeconds, updatedAt: Date.now() };
+  if (!payload.videoId) return;
+  playbackState = payload;
+  writeDatabase(playbackStateRef, payload, 'Unable to save playback position.');
+}
+
+function getResumeSeconds() {
+  const fromCommand = Number(nowPlaying?.seekSeconds ?? nowPlaying?.lastKnownSeconds ?? 0);
+  const fromPlayback = Number(playbackState?.lastKnownSeconds ?? 0);
+  return Math.max(0, Math.max(fromCommand, fromPlayback));
+}
+
+function postToPlayer(func, args = []) {
+  if (!player || !player.contentWindow) return false;
+  try {
+    player.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function startPlaybackProgressSync() {
+  if (progressSyncTimer) clearInterval(progressSyncTimer);
+  progressSyncTimer = setInterval(() => {
+    if (isSpeaker() && player && player.contentWindow) {
+      postToPlayer('getCurrentTime');
+    }
+  }, 2000);
+}
+
+function handlePlayerMessage(event) {
+  try {
+    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+    if (!data || data.event !== 'infoDelivery' || !data.info) return;
+    const currentTime = Number(data.info.currentTime);
+    if (!Number.isFinite(currentTime)) return;
+    const rounded = Math.max(0, Math.round(currentTime));
+    if (nowPlaying && nowPlaying.videoId && (lastReportedPlaybackSeconds === null || Math.abs(lastReportedPlaybackSeconds - rounded) >= 2)) {
+      lastReportedPlaybackSeconds = rounded;
+      setPlaybackState(rounded, nowPlaying.videoId);
+    }
+  } catch (e) {}
+}
+window.addEventListener('message', handlePlayerMessage);
 
 function extractVideoId(raw) {
   if (!raw) return null;
@@ -262,6 +333,10 @@ function extractVideoId(raw) {
 // ---- Firebase listeners ----
 activeDeviceRef.on('value', snap => {
   activeDevice = snap.val();
+  if (activeDevice && activeDevice.deviceId !== deviceId && player && nowPlaying && nowPlaying.videoId) {
+    postToPlayer('pauseVideo');
+    isPlayingGuess = false;
+  }
   render();
 });
 
@@ -271,28 +346,43 @@ nowPlayingRef.on('value', snap => {
   render();
 });
 
+playbackStateRef.on('value', snap => {
+  playbackState = snap.val();
+});
+
 db.ref('.info/connected').on('value', snap => {
   document.getElementById('statusError').style.display = snap.val() ? 'none' : 'block';
 });
 
 // ---- apply commands when this device is speaker ----
 function applyIncomingCommand() {
-  if (!isSpeaker() || !nowPlaying) return;
+  if (!nowPlaying) return;
   if (lastAppliedCommandId === nowPlaying.commandId) return;
   lastAppliedCommandId = nowPlaying.commandId;
 
   if (nowPlaying.action === 'load') {
+    if (!isSpeaker()) return;
     mountPlayer(nowPlaying.videoId);
+    setPlaybackState(0, nowPlaying.videoId);
     isPlayingGuess = true;
     return;
   }
-  if (!player || !player.contentWindow) return;
-  const post = (func, args = []) => {
-    try { player.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args }), '*'); } catch(e) {}
-  };
-  if (nowPlaying.action === 'play') { post('playVideo'); isPlayingGuess = true; }
-  else if (nowPlaying.action === 'pause') { post('pauseVideo'); isPlayingGuess = false; }
-  else if (nowPlaying.action === 'seek') { post('seekTo', [nowPlaying.seekSeconds, true]); }
+  if (nowPlaying.action === 'pause' || nowPlaying.action === 'stop') {
+    postToPlayer('pauseVideo');
+    isPlayingGuess = false;
+    return;
+  }
+  if (!isSpeaker()) return;
+  if (nowPlaying.action === 'play') {
+    const resumeSeconds = getResumeSeconds();
+    if (resumeSeconds > 0) postToPlayer('seekTo', [resumeSeconds, true]);
+    postToPlayer('playVideo');
+    isPlayingGuess = true;
+  }
+  else if (nowPlaying.action === 'seek') {
+    const resumeSeconds = Number(nowPlaying.seekSeconds ?? getResumeSeconds());
+    if (resumeSeconds > 0) postToPlayer('seekTo', [resumeSeconds, true]);
+  }
 }
 
 function mountPlayer(videoId) {
@@ -304,26 +394,63 @@ function mountPlayer(videoId) {
   player.allow = 'autoplay; encrypted-media';
   player.title = 'Relay audio';
   mount.appendChild(player);
+  lastReportedPlaybackSeconds = null;
+  startPlaybackProgressSync();
 }
 
 // ---- actions ----
 function claimSpeaker() {
-  const payload = { deviceId, deviceName, claimedAt: Date.now() };
-  activeDeviceRef.set(payload);
+  if (!nowPlaying || !nowPlaying.videoId) {
+    const payload = { deviceId, deviceName, claimedAt: Date.now() };
+    writeDatabase(activeDeviceRef, payload, 'Unable to claim the speaker role.');
+    return;
+  }
+
+  activeDevice = { deviceId, deviceName, claimedAt: Date.now() };
+  render();
+
+  const resumeSeconds = Math.max(0, Number(playbackState?.lastKnownSeconds ?? nowPlaying?.lastKnownSeconds ?? 0));
+  const pausePayload = {
+    videoId: nowPlaying.videoId,
+    commandId: genId('cmd-'),
+    action: 'pause',
+    issuedBy: deviceName,
+    issuedAt: Date.now(),
+    lastKnownSeconds: resumeSeconds,
+  };
+  const playPayload = {
+    videoId: nowPlaying.videoId,
+    commandId: genId('cmd-'),
+    action: 'play',
+    issuedBy: deviceName,
+    issuedAt: Date.now(),
+    seekSeconds: resumeSeconds,
+    lastKnownSeconds: resumeSeconds,
+  };
+
+  writeDatabase(activeDeviceRef, { deviceId, deviceName, claimedAt: Date.now() }, 'Unable to claim the speaker role.');
+  writeDatabase(nowPlayingRef, pausePayload, 'Unable to stop playback on the previous device.');
+  setTimeout(() => {
+    isPlayingGuess = true;
+    writeDatabase(nowPlayingRef, playPayload, 'Unable to resume playback here.');
+  }, 180);
 }
 
 function sendCommand(action, extra) {
   if (!nowPlaying || !nowPlaying.videoId) return;
+  const resumeSeconds = Number(extra?.seekSeconds ?? playbackState?.lastKnownSeconds ?? nowPlaying?.lastKnownSeconds ?? 0);
   const payload = Object.assign({
     videoId: nowPlaying.videoId,
     commandId: genId('cmd-'),
     action,
     issuedBy: deviceName,
     issuedAt: Date.now(),
+    lastKnownSeconds: resumeSeconds,
+    seekSeconds: resumeSeconds,
   }, extra || {});
   if (action === 'play') isPlayingGuess = true;
   if (action === 'pause') isPlayingGuess = false;
-  nowPlayingRef.set(payload);
+  writeDatabase(nowPlayingRef, payload, 'Unable to send the playback command.');
 }
 
 function loadVideo() {
@@ -338,7 +465,8 @@ function loadVideo() {
   errEl.style.display = 'none';
   const payload = { videoId: id, commandId: genId('cmd-'), action: 'load', issuedBy: deviceName, issuedAt: Date.now() };
   isPlayingGuess = true;
-  nowPlayingRef.set(payload);
+  setPlaybackState(0, id);
+  writeDatabase(nowPlayingRef, payload, 'Unable to load that video.');
   input.value = '';
 }
 
