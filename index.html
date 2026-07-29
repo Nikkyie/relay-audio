@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Relay</title>
+<style>
+  :root {
+    --bg: #0E1113;
+    --card: #14181A;
+    --card-border: #22272A;
+    --card-border-active: #2A4A47;
+    --input-bg: #0E1113;
+    --input-border: #262C30;
+    --text: #E9EDEF;
+    --text-dim: #B7BCC0;
+    --text-faint: #6B7278;
+    --text-faintest: #5A6166;
+    --teal: #4FD1C5;
+    --teal-bg: #1F2C2B;
+    --teal-border: #2A4A47;
+    --error: #E08A6B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .wrap {
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 32px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .header { display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 8px; }
+  .logo {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: var(--card); border: 1px solid var(--card-border);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .brand-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand-sub { font-size: 11px; color: var(--text-faint); }
+  .device-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 6px; padding: 5px 9px; font-size: 12px; color: var(--text-dim);
+    cursor: pointer;
+  }
+  .device-chip input {
+    background: transparent; border: none; outline: none; color: var(--text);
+    font-size: 12px; width: 100px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 16px;
+  }
+  .card.active { border-color: var(--card-border-active); }
+  .speaker-row { display: flex; align-items: center; justify-content: space-between; }
+  .label-sm { font-size: 10px; letter-spacing: 0.08em; color: var(--text-faint); text-transform: uppercase; }
+  .speaker-val { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 999px; background: var(--teal);
+    box-shadow: 0 0 0 4px rgba(79,209,197,0.15);
+  }
+  .btn {
+    background: #1B2426; border: 1px solid #2F363B; border-radius: 8px;
+    padding: 7px 12px; font-size: 12.5px; font-weight: 500; color: var(--text);
+    cursor: pointer;
+  }
+  .player-card { padding: 0; overflow: hidden; }
+  .player-visual {
+    position: relative; width: 100%; padding-top: 56.25%; background: #000;
+  }
+  .player-visual img {
+    position: absolute; top:0; left:0; width:100%; height:100%; object-fit: cover; opacity: 0.45;
+  }
+  .player-overlay {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 4px; text-align: center; padding: 0 16px;
+  }
+  .player-empty { padding: 36px 16px; text-align: center; color: var(--text-faintest); font-size: 13px; }
+  .load-row { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .load-input-row { display: flex; align-items: center; gap: 8px; }
+  .load-input {
+    flex: 1; display: flex; align-items: center; gap: 7px;
+    background: var(--input-bg); border: 1px solid var(--input-border);
+    border-radius: 8px; padding: 8px 10px;
+  }
+  .load-input input {
+    background: transparent; border: none; outline: none; color: var(--text);
+    font-size: 13px; width: 100%;
+  }
+  .load-btn {
+    background: var(--teal-bg); border: 1px solid var(--teal-border); color: var(--teal);
+    border-radius: 8px; padding: 9px 14px; font-size: 12.5px; font-weight: 600;
+    white-space: nowrap; cursor: pointer;
+  }
+  .error-row { display: flex; align-items: center; gap: 6px; color: var(--error); font-size: 12px; }
+  .controls {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    transition: opacity 0.2s;
+  }
+  .ctrl-btn {
+    width: 42px; height: 42px; border-radius: 999px; background: #1B2426;
+    border: 1px solid #2A3033; color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .ctrl-btn.main {
+    width: 52px; height: 52px; background: var(--teal-bg); border-color: var(--teal-border); color: var(--teal);
+  }
+  .last-action { text-align: center; font-size: 11px; color: var(--text-faintest); }
+  .last-action span { color: #8A9094; }
+  .status-error { text-align: center; font-size: 11px; color: var(--error); }
+  .hidden-audio { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; bottom: 0; left: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="brand">
+      <div class="logo">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#4FD1C5" stroke-width="2"><path d="M4 15a8 8 0 0 1 0-6"/><path d="M8 12a4 4 0 0 1 0-0"/><circle cx="12" cy="12" r="2" fill="#4FD1C5"/><path d="M16 12a4 4 0 0 1 0 0"/><path d="M20 15a8 8 0 0 0 0-6"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">Relay</div>
+        <div class="brand-sub mono">one speaker, any remote</div>
+      </div>
+    </div>
+    <div class="device-chip" id="deviceChip">
+      <span id="deviceNameDisplay" class="mono"></span>
+      <span>✎</span>
+    </div>
+  </div>
+
+  <div class="card" id="speakerCard">
+    <div class="speaker-row">
+      <div>
+        <div class="label-sm">Audio output</div>
+        <div class="speaker-val" id="speakerVal" style="color:#6B7278;">No speaker set</div>
+      </div>
+      <div id="speakerAction"></div>
+    </div>
+  </div>
+
+  <div class="card player-card">
+    <div id="playerArea"></div>
+    <div class="load-row">
+      <div class="load-input-row">
+        <div class="load-input">
+          <span style="color:#5A6166;">🔗</span>
+          <input id="urlInput" placeholder="Paste a YouTube link or video ID" />
+        </div>
+        <button class="load-btn" id="loadBtn">Load</button>
+      </div>
+      <div id="loadError" class="error-row" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div class="card controls" id="controlsCard">
+    <div class="ctrl-btn" id="backBtn">⟲</div>
+    <div class="ctrl-btn main" id="playPauseBtn">▶</div>
+    <div class="ctrl-btn" id="fwdBtn">⟳</div>
+  </div>
+
+  <div class="last-action" id="lastAction" style="display:none;"></div>
+  <div class="status-error" id="statusError" style="display:none;">Having trouble syncing — check your connection.</div>
+</div>
+
+<div id="audioMount"></div>
+
+<!-- Firebase (compat SDK — simplest for a plain static site, no bundler needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+/* ======================================================================
+   1) PASTE YOUR FIREBASE CONFIG HERE
+   Firebase console → Project settings → General → Your apps → SDK setup
+   ====================================================================== */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+/* ====================================================================== */
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const activeDeviceRef = db.ref('relay/activeDevice');
+const nowPlayingRef = db.ref('relay/nowPlaying');
+
+// ---- device identity ----
+function genId(prefix) {
+  return prefix + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+const deviceId = localStorage.getItem('relay-device-id') || genId('dev-');
+localStorage.setItem('relay-device-id', deviceId);
+let deviceName = localStorage.getItem('relay-device-name') || ('Device-' + deviceId.slice(4, 8).toUpperCase());
+localStorage.setItem('relay-device-name', deviceName);
+
+document.getElementById('deviceNameDisplay').textContent = deviceName;
+document.getElementById('deviceChip').addEventListener('click', () => {
+  const next = prompt('Device name', deviceName);
+  if (next && next.trim()) {
+    deviceName = next.trim();
+    localStorage.setItem('relay-device-name', deviceName);
+    document.getElementById('deviceNameDisplay').textContent = deviceName;
+    if (isSpeaker()) {
+      activeDeviceRef.set({ deviceId, deviceName, claimedAt: Date.now() });
+    }
+  }
+});
+
+// ---- state ----
+let activeDevice = null;
+let nowPlaying = null;
+let isPlayingGuess = false;
+let lastAppliedCommandId = null;
+let player = null; // hidden iframe element
+
+function isSpeaker() {
+  return activeDevice && activeDevice.deviceId === deviceId;
+}
+
+function extractVideoId(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (/^[a-zA-Z0-9_-]{10,12}$/.test(trimmed) && !trimmed.includes('http') && !trimmed.includes('.')) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    const host = url.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return url.pathname.slice(1).split('/')[0] || null;
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+      if (url.pathname.startsWith('/shorts/')) return url.pathname.split('/')[2] || null;
+      if (url.pathname.startsWith('/embed/')) return url.pathname.split('/')[2] || null;
+      const v = url.searchParams.get('v');
+      if (v) return v;
+    }
+  } catch (e) {}
+  return null;
+}
+
+// ---- Firebase listeners ----
+activeDeviceRef.on('value', snap => {
+  activeDevice = snap.val();
+  render();
+});
+
+nowPlayingRef.on('value', snap => {
+  nowPlaying = snap.val();
+  applyIncomingCommand();
+  render();
+});
+
+db.ref('.info/connected').on('value', snap => {
+  document.getElementById('statusError').style.display = snap.val() ? 'none' : 'block';
+});
+
+// ---- apply commands when this device is speaker ----
+function applyIncomingCommand() {
+  if (!isSpeaker() || !nowPlaying) return;
+  if (lastAppliedCommandId === nowPlaying.commandId) return;
+  lastAppliedCommandId = nowPlaying.commandId;
+
+  if (nowPlaying.action === 'load') {
+    mountPlayer(nowPlaying.videoId);
+    isPlayingGuess = true;
+    return;
+  }
+  if (!player || !player.contentWindow) return;
+  const post = (func, args = []) => {
+    try { player.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args }), '*'); } catch(e) {}
+  };
+  if (nowPlaying.action === 'play') { post('playVideo'); isPlayingGuess = true; }
+  else if (nowPlaying.action === 'pause') { post('pauseVideo'); isPlayingGuess = false; }
+  else if (nowPlaying.action === 'seek') { post('seekTo', [nowPlaying.seekSeconds, true]); }
+}
+
+function mountPlayer(videoId) {
+  const mount = document.getElementById('audioMount');
+  mount.innerHTML = '';
+  player = document.createElement('iframe');
+  player.className = 'hidden-audio';
+  player.src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&playsinline=1`;
+  player.allow = 'autoplay; encrypted-media';
+  player.title = 'Relay audio';
+  mount.appendChild(player);
+}
+
+// ---- actions ----
+function claimSpeaker() {
+  const payload = { deviceId, deviceName, claimedAt: Date.now() };
+  activeDeviceRef.set(payload);
+}
+
+function sendCommand(action, extra) {
+  if (!nowPlaying || !nowPlaying.videoId) return;
+  const payload = Object.assign({
+    videoId: nowPlaying.videoId,
+    commandId: genId('cmd-'),
+    action,
+    issuedBy: deviceName,
+    issuedAt: Date.now(),
+  }, extra || {});
+  if (action === 'play') isPlayingGuess = true;
+  if (action === 'pause') isPlayingGuess = false;
+  nowPlayingRef.set(payload);
+}
+
+function loadVideo() {
+  const input = document.getElementById('urlInput');
+  const id = extractVideoId(input.value);
+  const errEl = document.getElementById('loadError');
+  if (!id) {
+    errEl.style.display = 'flex';
+    errEl.textContent = "Couldn't find a video ID in that — paste a full YouTube link or an 11-character ID.";
+    return;
+  }
+  errEl.style.display = 'none';
+  const payload = { videoId: id, commandId: genId('cmd-'), action: 'load', issuedBy: deviceName, issuedAt: Date.now() };
+  isPlayingGuess = true;
+  nowPlayingRef.set(payload);
+  input.value = '';
+}
+
+function seekBy(delta) {
+  sendCommand('seek', { seekSeconds: Math.max(0, (nowPlaying?.lastKnownSeconds || 0) + delta) });
+}
+
+document.getElementById('loadBtn').addEventListener('click', loadVideo);
+document.getElementById('urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') loadVideo(); });
+document.getElementById('backBtn').addEventListener('click', () => seekBy(-10));
+document.getElementById('fwdBtn').addEventListener('click', () => seekBy(10));
+document.getElementById('playPauseBtn').addEventListener('click', () => sendCommand(isPlayingGuess ? 'pause' : 'play'));
+
+// ---- render ----
+function render() {
+  const speakerVal = document.getElementById('speakerVal');
+  const speakerAction = document.getElementById('speakerAction');
+  const speakerCard = document.getElementById('speakerCard');
+  const speaking = isSpeaker();
+
+  speakerCard.classList.toggle('active', speaking);
+  if (activeDevice && activeDevice.deviceName) {
+    speakerVal.style.color = speaking ? '#4FD1C5' : '#E9EDEF';
+    speakerVal.textContent = speaking ? 'This device' : activeDevice.deviceName;
+  } else {
+    speakerVal.style.color = '#6B7278';
+    speakerVal.textContent = 'No speaker set';
+  }
+  speakerAction.innerHTML = '';
+  if (speaking) {
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    speakerAction.appendChild(dot);
+  } else {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = 'Play audio here';
+    btn.onclick = claimSpeaker;
+    speakerAction.appendChild(btn);
+  }
+
+  const playerArea = document.getElementById('playerArea');
+  const hasVideo = !!(nowPlaying && nowPlaying.videoId);
+  const controlsCard = document.getElementById('controlsCard');
+  controlsCard.style.opacity = hasVideo ? '1' : '0.4';
+  controlsCard.style.pointerEvents = hasVideo ? 'auto' : 'none';
+
+  if (!hasVideo) {
+    playerArea.innerHTML = '<div class="player-empty">Nothing loaded yet — paste a link below.</div>';
+  } else {
+    const speakerName = activeDevice ? activeDevice.deviceName : null;
+    playerArea.innerHTML = `
+      <div class="player-visual">
+        <img src="https://img.youtube.com/vi/${nowPlaying.videoId}/hqdefault.jpg" alt="" />
+        <div class="player-overlay">
+          <div style="font-size:12px;color:#B7BCC0;">${speaking ? 'Playing here (audio hidden)' : (speakerName ? 'Playing on ' + speakerName : 'No speaker set — audio will not play')}</div>
+          <div class="mono" style="font-size:10.5px;color:#5A6166;">${nowPlaying.videoId}</div>
+        </div>
+      </div>`;
+    if (speaking && (!player || player.src.indexOf(nowPlaying.videoId) === -1)) {
+      mountPlayer(nowPlaying.videoId);
+    }
+  }
+
+  document.getElementById('playPauseBtn').textContent = isPlayingGuess ? '❚❚' : '▶';
+
+  const lastAction = document.getElementById('lastAction');
+  if (nowPlaying && nowPlaying.issuedBy) {
+    lastAction.style.display = 'block';
+    lastAction.innerHTML = 'Last action by <span>' + nowPlaying.issuedBy + '</span>';
+  } else {
+    lastAction.style.display = 'none';
+  }
+}
+
+render();
+</script>
+</body>
+</html>
