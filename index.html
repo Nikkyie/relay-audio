@@ -83,7 +83,31 @@
   }
   .player-overlay {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    flex-direction: column; gap: 4px; text-align: center; padding: 0 16px;
+    flex-direction: column; gap: 8px; text-align: center; padding: 16px;
+  }
+  .meta-card {
+    width: 100%; max-width: 300px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(14, 17, 19, 0.75); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(6px);
+  }
+  .meta-title {
+    font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .meta-sub {
+    margin-top: 4px; font-size: 11px; color: var(--text-dim);
+  }
+  .progress-row { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .progress-track {
+    width: 100%; height: 4px; border-radius: 999px; background: rgba(255,255,255,0.16);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; border-radius: inherit; background: var(--teal);
+    transition: width 0.2s ease;
+  }
+  .progress-time {
+    font-size: 10.5px; color: #DCE3E7; letter-spacing: 0.01em;
   }
   .player-empty { padding: 36px 16px; text-align: center; color: var(--text-faintest); font-size: 13px; }
   .load-row { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -106,6 +130,17 @@
   .controls {
     display: flex; align-items: center; justify-content: center; gap: 10px;
     transition: opacity 0.2s;
+    flex-wrap: wrap;
+  }
+  .volume-wrap {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 4px;
+  }
+  .volume-label {
+    font-size: 10px; letter-spacing: 0.08em; color: var(--text-faint); text-transform: uppercase;
+  }
+  .volume-slider {
+    width: 120px; accent-color: var(--teal);
   }
   .ctrl-btn {
     width: 42px; height: 42px; border-radius: 999px; background: #1B2426;
@@ -167,6 +202,11 @@
     <div class="ctrl-btn" id="backBtn">⟲</div>
     <div class="ctrl-btn main" id="playPauseBtn">▶</div>
     <div class="ctrl-btn" id="fwdBtn">⟳</div>
+    <div class="volume-wrap">
+      <span class="volume-label">Vol</span>
+      <input class="volume-slider" id="volumeSlider" type="range" min="0" max="100" value="100" />
+      <span class="volume-label" id="volumeValue">100%</span>
+    </div>
   </div>
 
   <div class="last-action" id="lastAction" style="display:none;"></div>
@@ -206,6 +246,7 @@ const db = firebase.database();
 const activeDeviceRef = db.ref('relay-audio/activeDevice');
 const nowPlayingRef = db.ref('relay-audio/nowPlaying');
 const playbackStateRef = db.ref('relay-audio/playbackState');
+const volumeRef = db.ref('relay-audio/volume');
 
 // ---- device identity ----
 function genId(prefix) {
@@ -238,6 +279,11 @@ let lastAppliedCommandId = null;
 let player = null; // hidden iframe element
 let progressSyncTimer = null;
 let lastReportedPlaybackSeconds = null;
+let videoTitle = null;
+let videoViews = null;
+let currentPlaybackSeconds = 0;
+let videoDurationSeconds = null;
+let volume = 100;
 
 function showDatabaseError(message) {
   const status = document.getElementById('statusError');
@@ -260,6 +306,22 @@ function writeDatabase(ref, value, fallbackMessage) {
 
 function isSpeaker() {
   return activeDevice && activeDevice.deviceId === deviceId;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatTime(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 function setPlaybackState(seconds, videoId) {
@@ -286,13 +348,67 @@ function postToPlayer(func, args = []) {
   }
 }
 
+function applyVolumeToPlayer() {
+  if (!player || !player.contentWindow) return;
+  const normalized = Math.max(0, Math.min(100, Number(volume) || 0));
+  postToPlayer('setVolume', [normalized]);
+}
+
 function startPlaybackProgressSync() {
   if (progressSyncTimer) clearInterval(progressSyncTimer);
   progressSyncTimer = setInterval(() => {
     if (isSpeaker() && player && player.contentWindow) {
       postToPlayer('getCurrentTime');
+      postToPlayer('getDuration');
+      postToPlayer('getVideoData');
     }
   }, 2000);
+}
+
+async function loadVideoMetadata(videoId) {
+  if (!videoId) {
+    videoTitle = null;
+    videoViews = null;
+    videoDurationSeconds = null;
+    currentPlaybackSeconds = 0;
+    render();
+    return;
+  }
+
+  videoTitle = 'Loading…';
+  videoViews = null;
+  currentPlaybackSeconds = 0;
+  render();
+
+  try {
+    const oEmbedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`);
+    if (oEmbedRes.ok) {
+      const oEmbedData = await oEmbedRes.json();
+      if (oEmbedData && oEmbedData.title) {
+        videoTitle = oEmbedData.title;
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers: { 'Accept-Language': 'en' } });
+    if (pageRes.ok) {
+      const pageHtml = await pageRes.text();
+      const viewMatch = pageHtml.match(/"viewCount":"(\d+)"/) || pageHtml.match(/"approxViewCount":"([0-9,]+)"/);
+      if (viewMatch) {
+        videoViews = Number(viewMatch[1].replace(/,/g, '')).toLocaleString();
+      }
+      const durationMatch = pageHtml.match(/"lengthSeconds":"(\d+)"/);
+      if (durationMatch) {
+        videoDurationSeconds = Number(durationMatch[1]);
+      }
+    }
+  } catch (e) {}
+
+  if (!videoTitle || videoTitle === 'Loading…') {
+    videoTitle = 'Untitled video';
+  }
+  render();
 }
 
 function handlePlayerMessage(event) {
@@ -300,12 +416,24 @@ function handlePlayerMessage(event) {
     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
     if (!data || data.event !== 'infoDelivery' || !data.info) return;
     const currentTime = Number(data.info.currentTime);
-    if (!Number.isFinite(currentTime)) return;
-    const rounded = Math.max(0, Math.round(currentTime));
-    if (nowPlaying && nowPlaying.videoId && (lastReportedPlaybackSeconds === null || Math.abs(lastReportedPlaybackSeconds - rounded) >= 2)) {
-      lastReportedPlaybackSeconds = rounded;
-      setPlaybackState(rounded, nowPlaying.videoId);
+    if (Number.isFinite(currentTime)) {
+      const rounded = Math.max(0, Math.round(currentTime));
+      currentPlaybackSeconds = rounded;
+      if (nowPlaying && nowPlaying.videoId && (lastReportedPlaybackSeconds === null || Math.abs(lastReportedPlaybackSeconds - rounded) >= 2)) {
+        lastReportedPlaybackSeconds = rounded;
+        setPlaybackState(rounded, nowPlaying.videoId);
+      }
     }
+
+    if (data.info && data.info.duration) {
+      videoDurationSeconds = Math.max(0, Math.round(Number(data.info.duration)));
+    }
+
+    if (data.info && data.info.videoData && data.info.videoData.title) {
+      videoTitle = data.info.videoData.title;
+    }
+
+    render();
   } catch (e) {}
 }
 window.addEventListener('message', handlePlayerMessage);
@@ -353,6 +481,18 @@ playbackStateRef.on('value', snap => {
   playbackState = snap.val();
 });
 
+volumeRef.on('value', snap => {
+  const nextVolume = Number(snap.val());
+  if (Number.isFinite(nextVolume)) {
+    volume = Math.max(0, Math.min(100, nextVolume));
+    const slider = document.getElementById('volumeSlider');
+    const value = document.getElementById('volumeValue');
+    if (slider) slider.value = volume;
+    if (value) value.textContent = `${volume}%`;
+    applyVolumeToPlayer();
+  }
+});
+
 db.ref('.info/connected').on('value', snap => {
   document.getElementById('statusError').style.display = snap.val() ? 'none' : 'block';
 });
@@ -398,7 +538,11 @@ function mountPlayer(videoId) {
   player.title = 'Relay audio';
   mount.appendChild(player);
   lastReportedPlaybackSeconds = null;
+  currentPlaybackSeconds = 0;
+  videoDurationSeconds = null;
   startPlaybackProgressSync();
+  loadVideoMetadata(videoId);
+  applyVolumeToPlayer();
 }
 
 // ---- actions ----
@@ -482,6 +626,12 @@ document.getElementById('urlInput').addEventListener('keydown', e => { if (e.key
 document.getElementById('backBtn').addEventListener('click', () => seekBy(-10));
 document.getElementById('fwdBtn').addEventListener('click', () => seekBy(10));
 document.getElementById('playPauseBtn').addEventListener('click', () => sendCommand(isPlayingGuess ? 'pause' : 'play'));
+document.getElementById('volumeSlider').addEventListener('input', e => {
+  volume = Number(e.target.value || 0);
+  document.getElementById('volumeValue').textContent = `${volume}%`;
+  writeDatabase(volumeRef, volume, 'Unable to update volume.');
+  applyVolumeToPlayer();
+});
 
 // ---- render ----
 function render() {
@@ -521,10 +671,22 @@ function render() {
     playerArea.innerHTML = '<div class="player-empty">Nothing loaded yet — paste a link below.</div>';
   } else {
     const speakerName = activeDevice ? activeDevice.deviceName : null;
+    const titleText = videoTitle || nowPlaying.videoId;
+    const viewText = videoViews ? `${videoViews} views` : 'Views unavailable';
+    const progressPercent = videoDurationSeconds ? `${Math.min(100, Math.max(0, (currentPlaybackSeconds / videoDurationSeconds) * 100))}%` : '0%';
+    const timeText = `${formatTime(currentPlaybackSeconds)}${videoDurationSeconds ? ' / ' + formatTime(videoDurationSeconds) : ''}`;
     playerArea.innerHTML = `
       <div class="player-visual">
         <img src="https://img.youtube.com/vi/${nowPlaying.videoId}/hqdefault.jpg" alt="" />
         <div class="player-overlay">
+          <div class="meta-card">
+            <div class="meta-title">${escapeHtml(titleText)}</div>
+            <div class="meta-sub">${escapeHtml(viewText)}</div>
+            <div class="progress-row">
+              <div class="progress-track"><div class="progress-fill" style="width:${progressPercent};"></div></div>
+              <div class="progress-time">${escapeHtml(timeText)}</div>
+            </div>
+          </div>
           <div style="font-size:12px;color:#B7BCC0;">${speaking ? 'Playing here (audio hidden)' : (speakerName ? 'Playing on ' + speakerName : 'No speaker set — audio will not play')}</div>
           <div class="mono" style="font-size:10.5px;color:#5A6166;">${nowPlaying.videoId}</div>
         </div>
@@ -535,6 +697,10 @@ function render() {
   }
 
   document.getElementById('playPauseBtn').textContent = isPlayingGuess ? '❚❚' : '▶';
+  const slider = document.getElementById('volumeSlider');
+  const volumeValue = document.getElementById('volumeValue');
+  if (slider) slider.value = volume;
+  if (volumeValue) volumeValue.textContent = `${volume}%`;
 
   const lastAction = document.getElementById('lastAction');
   if (nowPlaying && nowPlaying.issuedBy) {
